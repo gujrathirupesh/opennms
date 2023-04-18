@@ -1,7 +1,7 @@
 ##
-# Use Java base image and setup required RPMS as cacheable image.
+# Use Java base image and setup required RPMs as cacheable image.
 ##
-ARG BASE_IMAGE="opennms/deploy-base:jre-2.1.0.b175"
+ARG BASE_IMAGE="opennms/deploy-base:ubi9-3.1.0.b215-jre-11"
 
 FROM ${BASE_IMAGE} as core-tarball
 
@@ -33,50 +33,12 @@ RUN chmod +x /tmp/plugins.sh  && cd /tmp && ./plugins.sh && rm ./plugins.sh
 
 FROM ${BASE_IMAGE} as core-base
 
-ARG REQUIRED_DEBS="rrdtool jrrd2 r-base-core rsync libxml-twig-perl libwww-perl jq diffutils hostname sudo"
-
-ARG REPO_KEY_URL="https://debian.opennms.org/OPENNMS-GPG-KEY"
+ARG REQUIRED_RPMS="diffutils hostname jrrd2 jq rrdtool"
 
 SHELL ["/bin/bash", "-c"]
 
-# Prevent setup prompt
-ENV DEBIAN_FRONTEND=noninteractive
-
-# import keys
-RUN apt-get update && \
-    apt-get \
-        --no-install-recommends \
-        -yq \
-        install \
-            gnupg \
-            ca-certificates && \
-    curl -fsSL ${REPO_KEY_URL} | apt-key add && \
-    echo "deb https://debian.opennms.org stable main" > /etc/apt/sources.list.d/opennms.list && \
-    apt-get update && \
-    apt-get \
-        --no-install-recommends \
-        -yq \
-        install \
-            ${REQUIRED_DEBS} && \
-    apt-get -y autoclean && \
-    apt-get -y clean && \
-    rm -rf /var/cache/apt
-
-# Preserve a pristine copy of the Java binaries before we apply setcap
-# Symlink to the other resources vs copying to keep the container image smaller
-RUN mkdir "${JAVA_HOME}-nocap" && \
-    cp -R "${JAVA_HOME}/bin" "${JAVA_HOME}-nocap/" && \
-    ln -s "${JAVA_HOME}/conf" "${JAVA_HOME}-nocap/conf" && \
-    ln -s "${JAVA_HOME}/docs" "${JAVA_HOME}-nocap/docs" && \
-    ln -s "${JAVA_HOME}/legal" "${JAVA_HOME}-nocap/legal" && \
-    ln -s "${JAVA_HOME}/lib" "${JAVA_HOME}-nocap/lib" && \
-    ln -s "${JAVA_HOME}/man" "${JAVA_HOME}-nocap/man" && \
-    ln -s "${JAVA_HOME}/release" "${JAVA_HOME}-nocap/release"
-
-# Allow to send ICMP messages as non-root user
-RUN setcap cap_net_raw+ep ${JAVA_HOME}/bin/java && \
-    echo ${JAVA_HOME}/lib/jli > /etc/ld.so.conf.d/java-latest.conf && \
-    ldconfig
+RUN microdnf -y install ${REQUIRED_RPMS} && \
+    rm -rf /var/cache/yum
 
 # Create OpenNMS user with a specific group ID
 RUN groupadd \
