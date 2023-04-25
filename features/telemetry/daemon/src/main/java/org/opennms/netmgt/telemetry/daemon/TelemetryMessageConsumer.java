@@ -1,8 +1,8 @@
 /*******************************************************************************
  * This file is part of OpenNMS(R).
  *
- * Copyright (C) 2017-2017 The OpenNMS Group, Inc.
- * OpenNMS(R) is Copyright (C) 1999-2017 The OpenNMS Group, Inc.
+ * Copyright (C) 2017-2023 The OpenNMS Group, Inc.
+ * OpenNMS(R) is Copyright (C) 1999-2023 The OpenNMS Group, Inc.
  *
  * OpenNMS(R) is a registered trademark of The OpenNMS Group, Inc.
  *
@@ -30,6 +30,7 @@ package org.opennms.netmgt.telemetry.daemon;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -52,11 +53,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 
-import com.google.common.collect.Sets;
-
 
 public class TelemetryMessageConsumer implements MessageConsumer<TelemetryMessage, TelemetryProtos.TelemetryMessageLog> {
     private final Logger LOG = LoggerFactory.getLogger(TelemetryMessageConsumer.class);
+
+    public static final int ADAPTER_WAIT_MS = 60_000;
 
     @Autowired
     private TelemetryRegistry telemetryRegistry;
@@ -66,9 +67,9 @@ public class TelemetryMessageConsumer implements MessageConsumer<TelemetryMessag
     private final List<AdapterDefinition> adapterDefs;
 
     // Actual adapters implementing the logic
-    private final Set<Adapter> adapters = Sets.newHashSet();
+    private final Set<Adapter> adapters = new HashSet<>();
 
-    public TelemetryMessageConsumer(QueueConfig queueConfig, TelemetrySinkModule sinkModule) throws Exception {
+    public TelemetryMessageConsumer(QueueConfig queueConfig, TelemetrySinkModule sinkModule) {
         this(queueConfig,
                 queueConfig.getAdapters(),
                 sinkModule);
@@ -79,25 +80,38 @@ public class TelemetryMessageConsumer implements MessageConsumer<TelemetryMessag
                                     TelemetrySinkModule sinkModule) {
         this.queueDef = Objects.requireNonNull(queueDef);
         this.sinkModule = Objects.requireNonNull(sinkModule);
-        this.adapterDefs = new ArrayList(adapterDefs);
+        this.adapterDefs = new ArrayList<>(adapterDefs);
     }
 
     @PostConstruct
     public void init() throws Exception {
-        // Pre-emptively instantiate the adapters
-        for (AdapterDefinition adapterDef : adapterDefs) {
+        for (final AdapterDefinition adapterDef : adapterDefs) {
+            initAdapter(adapterDef);
+        }
+    }
+
+    private void initAdapter(final AdapterDefinition adapterDef) throws Exception {
+        // wait for the adapter if it's not available yet
+        final long timeout = System.currentTimeMillis() + ADAPTER_WAIT_MS;
+
+        do {
             final Adapter adapter;
             try {
                 adapter = telemetryRegistry.getAdapter(adapterDef);
-            } catch (Exception e) {
-                throw new Exception("Failed to create adapter from definition: " + adapterDef, e);
+                if (adapter != null) {
+                    adapters.add(adapter);
+                    break;
+                }
+            } catch (final Exception e) {
+                LOG.debug("Error getting adapter from definition {}", adapterDef, e);
             }
 
-            if (adapter == null) {
-                throw new Exception("No adapter found for class: " + adapterDef.getClassName());
-            }
-            adapters.add(adapter);
-        }
+            long remainingSeconds = ((timeout - System.currentTimeMillis()) / 1000);
+            LOG.warn("Failed to create adapter from definition: {}, will keep retrying for {} more seconds", adapterDef, remainingSeconds);
+            Thread.sleep(5000);
+        } while (timeout < System.currentTimeMillis());
+
+        throw new Exception("Gave up retrying.  No adapter found for class: " + adapterDef.getClassName());
     }
 
     @Override
@@ -110,7 +124,6 @@ public class TelemetryMessageConsumer implements MessageConsumer<TelemetryMessag
                     adapter.handleMessageLog(messageLog);
                 } catch (RuntimeException e) {
                     LOG.warn("Adapter: {} failed to handle message log: {}. Skipping.", adapter, messageLog, e);
-                    continue;
                 }
             }
         }
@@ -118,7 +131,8 @@ public class TelemetryMessageConsumer implements MessageConsumer<TelemetryMessag
 
     @PreDestroy
     public void destroy() {
-        adapters.forEach((adapter) -> adapter.destroy());
+        adapters.forEach(Adapter::destroy);
+        adapters.clear();
     }
 
     @Override
