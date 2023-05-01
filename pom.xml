@@ -1749,7 +1749,7 @@
     <quartzVersion>2.3.2</quartzVersion>
     <rateLimitedLoggerVersion>2.0.1</rateLimitedLoggerVersion>
     <resilience4jVersion>0.17.0</resilience4jVersion>
-    <rocksdbjniVersion>7.4.5</rocksdbjniVersion>
+    <rocksdbjniVersion>8.1.1.1</rocksdbjniVersion>
     <scalaLibraryVersion>2.13.7</scalaLibraryVersion>
     <scalaLoggingVersion>3.9.5</scalaLoggingVersion>
     <scalaVersion>2.13</scalaVersion>
